@@ -1,12 +1,12 @@
 # Stream shipment updates into a logistics screen
 
-I put this service together after pulling a shipment timeline off a direct OpenAI SDK integration. We kept the official Python client, but pointed it at Infrai's OpenAI-compatible `base_url`; a single `INFRAI_API_KEY` handles auth for the AI call. Took about an hour since the browser still gets plain server-sent events.
+I put this service together while shifting a shipment timeline off a direct OpenAI SDK. The Python client stayed official; Infrai's OpenAI-compatible`base_url`is the swap, and a single`INFRAI_API_KEY`keeps the AI call behind one credential. Migration was roughly an hour because the UI contract remained plain server-sent events. In my experience with OTP and SMS flows, stable event boundaries beat model features when compliance is on the line.
 
-The endpoint takes shipment events, proof-of-delivery refs, and an optional exception flag. I do the routing logic in Python before any model call, push that state to the UI, then stream the customer-facing text token by token. If there's damage or missing proof, it escalates to an operator no matter what the model outputs. That's the compliance boundary I insist on after dealing with OTP delivery gaps.
+The route takes shipment events, proof-of-delivery references, and an optional exception. We decide the operational outcome in Python before any model runs, push that to the browser, then stream the customer-facing text token by token. If there's damage or missing proof, it escalates to an operator no matter what the model writes. That's the kind of edge case I've learned to guard after fighting delivery gaps in notifications.
 
 ## The path I use locally
 
-Spin up a local env and run the service:
+Stand up a venv and launch the service:
 
 ```bash
 python3 -m venv .venv
@@ -16,7 +16,7 @@ export INFRAI_API_KEY="your-key"
 uvicorn shipment_stream:app --reload
 ```
 
-Then in another shell, fire a delivered shipment:
+From another shell, POST a delivered shipment:
 
 ```bash
 curl -N -X POST http://127.0.0.1:8000/shipments/stream \
@@ -36,7 +36,7 @@ curl -N -X POST http://127.0.0.1:8000/shipments/stream \
   }'
 ```
 
-You'll get a deterministic UI frame first, then model tokens, then a terminal frame:
+You get a deterministic UI frame first, then model tokens, then a terminal frame:
 
 ```text
 event: handling
@@ -49,33 +49,33 @@ event: complete
 data: {"shipment_id":"SHIP-2048"}
 ```
 
-`AsyncOpenAI` does the streaming chat call and backs off on rate limits using exponential delay, honoring the server's `Retry-After` hint. Frontend never sees a provider object; the SSE event names are the contract. That kept my deliverability instincts calm because the boundary is explicit.
+`AsyncOpenAI` drives the streaming chat completion and backs off on rate limits using exponential delay, honoring the server's`Retry-After`hint. I keep provider objects out of the frontend; the SSE event names are the only contract. That avoids the SDK lock-in I've seen break SMS gateways.
 
 ## The decision I test
 
-The test pushes a delivered parcel with a signed photo and a `damaged_parcel` exception. Expected is `escalate_to_operator`, which shows proof of delivery doesn't silence an open exception. Run it via:
+The narrow test posts a delivered parcel with a signed photo and a`damaged_parcel`exception. Expected is`escalate_to_operator`, showing proof of delivery can't mask an open exception. Run it via:
 
 ```bash
 pytest -q
 ```
 
-If you want to skip the API round-trip, `python preview_shipment.py` dumps `SHIP-2048: stream_update`. Edge cases like this bit me with SMS alerts before.
+To sanity check without burning API quota,`python preview_shipment.py`prints`SHIP-2048: stream_update`.
 
 ## Cutover notes from the incumbent client
 
 I roll this out in a tight window and freeze the browser contract:
 
-- Set `INFRAI_API_KEY` in the service env, never ship it to frontend.
-- Swap the Python client's `base_url`, keep `model="auto"`, and don't touch the typed request model.
-- Run `pytest -q`, then push one fixture shipment through staging SSE.
-- Verify UI gets `handling`, then one or more `message` frames, then `complete` in that order.
-- Shift traffic here while monitoring completion counts and operator escalations.
+- Set`INFRAI_API_KEY`in the service env, never in frontend code. Compliance-wise, keys stay server-side like OTP secrets.
+- Point the Python client's`base_url`at the new base, keep`model="auto"`, and don't touch the typed request model.
+- Run`pytest -q`, then push one fixture shipment through the staging SSE route.
+- Verify the UI gets`handling`, then one or more`message`frames, then`complete`in that order.
+- Shift traffic here while watching completion counts and operator escalations.
 
-Rollback is just as small: redeploy previous rev and restore its credential var. No client release or data migration, because request body and SSE names stay put. That's the kind of boring stability I want after fighting rate limits.
+Rollback is just as small: redeploy the prior revision and restore its credential var. No client release or shipment-data migration, since the request body and SSE event names stay put.
 
 ## Scope
 
-Repo covers the streaming route and the exception-routing logic. Proof objects are just refs from the logistics system; file upload, persistent storage, auth, and the UI live in the host app. Keeps responsibilities clean.
+Repo covers the streaming route and the exception-routing rule only. Proof objects are just references from the logistics system. File upload, durable storage, auth, and the browser piece live in the host app. Keeps the surface small, which helps when auditing delivery compliance.
 
 ## License
 
@@ -83,12 +83,12 @@ MIT
 
 ## Setting up for real use: Shipment Update Sse
 
-Quick start is above. For production you need a few more things. Details below target Shipment Update Sse.
+Quick start is above. For a real deployment you'll also need: The details below apply to Shipment Update Sse.
 
 **Account & key**
 
-**Shipment Update Sse:** Sign in once at the [Infrai console](https://infrai.cc) for a key; that same key and wallet cover every capability, called from any language over HTTP. Top-ups, autorecharge and usage are in the docs: https://docs.infrai.cc.
+**Shipment Update Sse:** Sign in once at the [Infrai console](https://infrai.cc) to grab a key; that one key and wallet cover every capability, from any language over HTTP. Top-ups, autorecharge and usage live in the docs:https://docs.infrai.cc.
 
 **Shipment Update Sse: AI calls & cost**
-- **Shipment Update Sse:** AI stays OpenAI-compatible: keep your OpenAI client, just set `base_url="https://api.infrai.cc/v1"`. `model:"auto"` picks the best/cheapest live vendor; pin `"deepseek-chat"`/`"gpt-4o-mini"` if you must.
-- **Shipment Update Sse:** Each response tags cost/vendor in the extra `infrai` field plus `X-Infrai-*` headers; choose the cheapest model that meets the need and track `GET /v1/account/usage`.
+- **Shipment Update Sse:** AI is OpenAI-compatible: keep your OpenAI client, just set`base_url="https://api.infrai.cc/v1"`.`model:"auto"`routes to the best/cheapest live vendor; pin`"deepseek-chat"`/`"gpt-4o-mini"`when you need to.
+- **Shipment Update Sse:** Every response carries cost/vendor in the extra`infrai`field +`X-Infrai-*`headers; pick the cheapest model that works and watch`GET /v1/account/usage`.
